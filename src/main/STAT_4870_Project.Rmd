@@ -8,3 +8,43 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+<!-- Libraries & Setup -->
+```{r}
+library(MASS)
+library(car)
+library(nnet)
+library(dplyr)
+```
+
+<!-- Data Clean-Up -->
+```{r}
+loan <- read.csv("./src/main/loan_data.csv")
+loan <- as_tibble(loan)
+loan <- loan |> mutate(
+  person_gender = factor(person_gender, ordered = FALSE, levels = c("female", "male")),
+  person_education = factor(person_education, ordered = TRUE, levels = c("High School", "Associate", "Bachelor", "Master", "Doctorate")),
+  person_home_ownership = factor(person_home_ownership, ordered = FALSE, c("RENT", "OWN", "MORTGAGE", "OTHER")),
+  loan_intent = factor(loan_intent, ordered = FALSE, c("PERSONAL", "MEDICAL", "EDUCATION", "VENTURE", "HOMEIMPROVEMENT", "DEBTCONSOLIDATION"))
+)
+loan
+```
+
+## Abstract
+<!-- Explain The Data -->
+ - Explain what the data columns are, what the different values of each column.
+ - Explain what data we decided to exclude before any training.
+## Objective
+<!-- State the objective of this project -->
+  - i.e the objective is seek value information out of a specific dataset using regressional techniques.
+## Methods
+<!-- What type of regession techniques did we use? -->
+  - i.e nominal / logistic / ordinal / linear / multilinear
+<!-- What type of variable selection methods did we use? -->
+  
+<!-- What type of model selection method did we use? -->
+
+## Analysis
+  <!-- Analysis Introductoin -->
+  
+## Conclusion
+  - 
