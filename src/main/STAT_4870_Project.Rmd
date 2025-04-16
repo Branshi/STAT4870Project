@@ -30,6 +30,8 @@ loan <- loan |> mutate(
   loan_intent = factor(loan_intent, ordered = FALSE, c("PERSONAL", "MEDICAL", "EDUCATION", "VENTURE", "HOMEIMPROVEMENT", "DEBTCONSOLIDATION"))
 )
 loan
+train <- loan[1:36000,]
+test <- loan[36001:45000,]
 ```
 
 ## Abstract
