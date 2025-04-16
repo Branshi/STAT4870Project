@@ -2,14 +2,17 @@
 title: "Data Science Salaries"
 author: "Trillyon Earl"
 date: "2025-03-01"
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 <!-- Libraries & Setup -->
-```{r}
+```{r libs}
 library(MASS)
 library(car)
 library(nnet)
@@ -17,8 +20,8 @@ library(dplyr)
 ```
 
 <!-- Data Clean-Up -->
-```{r}
-loan <- read.csv("./src/main/loan_data.csv")
+```{r cleanup}
+loan <- read.csv("./loan_data.csv")
 loan <- as_tibble(loan)
 loan <- loan |> mutate(
   person_gender = factor(person_gender, ordered = FALSE, levels = c("female", "male")),
@@ -33,9 +36,11 @@ loan
 <!-- Explain The Data -->
  - Explain what the data columns are, what the different values of each column.
  - Explain what data we decided to exclude before any training.
+ 
 ## Objective
 <!-- State the objective of this project -->
   - i.e the objective is seek value information out of a specific dataset using regressional techniques.
+  
 ## Methods
 <!-- What type of regession techniques did we use? -->
   - i.e nominal / logistic / ordinal / linear / multilinear
@@ -44,7 +49,8 @@ loan
 <!-- What type of model selection method did we use? -->
 
 ## Analysis
-  <!-- Analysis Introductoin -->
+  <!-- Analysis Introduction -->
   
 ## Conclusion
   - 
+
