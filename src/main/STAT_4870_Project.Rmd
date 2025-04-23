@@ -1,6 +1,6 @@
 ---
 title: "Data Science Salaries"
-author: "Trillyon Earl"
+author: "Trillyon Earl, Owen Jefcoat"
 date: "2025-03-01"
 output:
   html_document:
@@ -12,11 +12,12 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 <!-- Libraries & Setup -->
-```{r libs}
+```{r libs, results=FALSE, warnings=FALSE}
 library(MASS)
 library(car)
 library(nnet)
 library(dplyr)
+library(leaps)
 ```
 
 <!-- Data Clean-Up -->
@@ -29,12 +30,9 @@ loan <- loan |> mutate(
   person_home_ownership = factor(person_home_ownership, ordered = FALSE, c("RENT", "OWN", "MORTGAGE", "OTHER")),
   loan_intent = factor(loan_intent, ordered = FALSE, c("PERSONAL", "MEDICAL", "EDUCATION", "VENTURE", "HOMEIMPROVEMENT", "DEBTCONSOLIDATION"))
 )
-loan
 
 #Variable naming and indicator creation
-train <- loan[1:36000,]
-test <- loan[36001:45000,]
-age <- train$person_age; gender <- train$person_gender; education <- train$person_education; income <- train$person_income; exp <- train$person_emp_exp; HO <- train$person_home_ownership; loan_amnt <- train$loan_amnt; loan_intent <- train$loan_intent; loan_int_rate <- train$loan_int_rate; loan_percent_income <- train$loan_percent_income; cred_hist_length <- train$cb_person_cred_hist_length; credit_score <- train$credit_score; prev_defaults <- train$previous_loan_defaults_on_file; status <- train$loan_status
+age <- loan$person_age; gender <- loan$person_gender; education <- loan$person_education; income <- loan$person_income; exp <- loan$person_emp_exp; HO <- loan$person_home_ownership; loan_amnt <- loan$loan_amnt; loan_intent <- loan$loan_intent; loan_int_rate <- loan$loan_int_rate; loan_percent_income <- loan$loan_percent_income; cred_hist_length <- loan$cb_person_cred_hist_length; credit_score <- loan$credit_score; prev_defaults <- loan$previous_loan_defaults_on_file; status <- loan$loan_status
 
 #Gender indicators (male is baseline)
 female <- ifelse(gender == "female", 1, 0)
@@ -59,6 +57,12 @@ debtconsol <- ifelse(loan_intent == "DEBTCONSOLIDATION", 1, 0)
 
 #Previous loan defaults on file indicator (No is baselines)
 yesdefault <- ifelse(prev_defaults == "Yes", 1, 0)
+
+loan_indic <- as_tibble(cbind(age, female, associate, bachelor, master, phd, income, exp, rent, mortgage, own, loan_amnt, education, medical, venture, homeimprov, debtconsol, loan_int_rate, loan_percent_income, cred_hist_length, credit_score, yesdefault, status))
+
+#Split training and testing data
+train_indic <- loan_indic[1:36000,]
+test_indic <- loan_indic[36001:45000,]
 ```
 
 ## Abstract
@@ -66,13 +70,72 @@ yesdefault <- ifelse(prev_defaults == "Yes", 1, 0)
  - Explain what the data columns are, what the different values of each column.
  - Explain what data we decided to exclude before any training.
  
+```{r exclusions}
+loan_logit <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic)
+#Leverage
+Xhat <- as.matrix(train_indic[-14])
+lev <- hat(Xhat)
+levthreshold <- 2*(24/36000)
+levindex <- which(lev > levthreshold)
+
+#Cook's Distance
+cd <- cooks.distance(loan_logit)
+cdindex <- which(cd > 0.8)
+
+#Studentized residuals
+rstud <- rstudent(loan_logit)
+rstudindex <- which(rstud > 2)
+
+intersect(levindex, rstudindex)
+intersect(rstudindex, cdindex)
+intersect(levindex, cdindex)
+
+#Removing influential point
+train_indic_fixed <- train_indic[-32298,]
+```
+ 
 ## Objective
 <!-- State the objective of this project -->
-  - i.e the objective is seek value information out of a specific dataset using regressional techniques.
+  - Analyze loan approval data and determine which factors are more or less likely to lead to people being approved or denied for loans.
   
 ## Methods
 <!-- What type of regession techniques did we use? -->
   - i.e nominal / logistic / ordinal / linear / multilinear
+  
+We used binary logistic regression:
+```{r logit}
+loan_logit_fixed <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_fixed)
+deviance(loan_logit_fixed)
+deviance(loan_logit)
+
+#VIF analysis w/ drop in deviance testing
+vifs <- vif(loan_logit_fixed)
+which(vifs >= 10)   
+loan_logit_minusAge <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_fixed[,-1])
+loan_logit_minusExp <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_fixed[,-8])
+loan_logit_minusHO <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_fixed[,c(-9,-10,-11)])
+anova(loan_logit_fixed, loan_logit_minusAge, loan_logit_minusExp, loan_logit_fixed, test="Chisq")
+anova(loan_logit_fixed, loan_logit_minusAge, loan_logit_minusExp, loan_logit_fixed, test="Cp")
+#From this we conclude that VIF analysis of our data is not useful
+
+#Backwards AIC
+#back_AIC <- stepAIC(loan_logit_fixed, direction = "backward", k=2)
+Cpsel <- leaps(as.matrix(train_indic_fixed[,-23]), train_indic_fixed$status, method = "Cp", nbest=2)
+Table <- cbind(Cpsel$which, Cpsel$size, Cpsel$Cp)
+Table[which(Cpsel$Cp == min(Cpsel$Cp)),]
+train_indic_Cpsel <- train_indic_fixed[,c(-1,-2,-4,-5,-6,-8)]
+loan_logit_Cpsel <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_Cpsel)
+anova(loan_logit_Cpsel, loan_logit_fixed)
+
+#Predictions
+predictions <- predict(loan_logit_fixed, newdata=data.frame(test_indic[,-23]), type="response")
+mean((predictions > 0.5 & test_indic[23] == 1) | (predictions <= 0.5 & test_indic[23] == 0))
+Cppredictions <- predict(loan_logit_Cpsel, newdata=data.frame(test_indic[,c(-1,-2,-4,-5,-6,-8)]), type = "response")
+mean((Cppredictions > 0.5 & test_indic[23] == 1) | (Cppredictions <= 0.5 & test_indic[23] == 0))
+```
+
+So our model with minimal Cp includes associate, income, rent, mortgage, own, loan_amnt, education, medical, venture, homeimprov, debtconsol, loan_int_rate, loan_percent_income, cred_hist_length, credit_score, yesdefault
+
 <!-- What type of variable selection methods did we use? -->
   
 <!-- What type of model selection method did we use? -->
@@ -81,5 +144,4 @@ yesdefault <- ifelse(prev_defaults == "Yes", 1, 0)
   <!-- Analysis Introduction -->
   
 ## Conclusion
-  - 
-
+  -
