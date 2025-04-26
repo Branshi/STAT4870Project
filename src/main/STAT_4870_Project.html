@@ -13,7 +13,7 @@
 
 <meta name="date" content="2025-03-01" />
 
-<title>Data Science Salaries</title>
+<title>Loan Approval Data Project</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -1621,7 +1621,7 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Data Science Salaries</h1>
+<h1 class="title toc-ignore">Loan Approval Data Project</h1>
 <h4 class="author">Trillyon Earl, Owen Jefcoat</h4>
 <h4 class="date">2025-03-01</h4>
 
@@ -1630,26 +1630,43 @@ display: none;
 
 <!-- Libraries & Setup -->
 <pre class="r"><code>library(MASS)
-library(car)</code></pre>
-<pre><code>## Loading required package: carData</code></pre>
-<pre class="r"><code>library(nnet)
-library(dplyr)</code></pre>
-<pre><code>## 
-## Attaching package: &#39;dplyr&#39;</code></pre>
-<pre><code>## The following object is masked from &#39;package:car&#39;:
-## 
-##     recode</code></pre>
-<pre><code>## The following object is masked from &#39;package:MASS&#39;:
-## 
-##     select</code></pre>
-<pre><code>## The following objects are masked from &#39;package:stats&#39;:
-## 
-##     filter, lag</code></pre>
-<pre><code>## The following objects are masked from &#39;package:base&#39;:
-## 
-##     intersect, setdiff, setequal, union</code></pre>
-<pre class="r"><code>library(leaps)</code></pre>
+library(car)
+library(nnet)
+library(dplyr)
+library(leaps)</code></pre>
 <!-- Data Clean-Up -->
+<p>We regressed on whether a loan was approved or denied, based on data
+about applicants:</p>
+<p>Variables in the dataset:</p>
+<ul>
+<li><strong>status</strong>: (factor) Whether the loan was approved (1
+for approved, 0 for denied)</li>
+<li><strong>age</strong>: (numeric) Age of applicant</li>
+<li><strong>gender</strong>: (factor) Gender of applicant (1 for female,
+0 for male)</li>
+<li><strong>education</strong>: (ordered factor) Maximum educational
+attainment (High School -&gt; Associate -&gt; Bachelor -&gt; Master
+-&gt; Doctorate)</li>
+<li><strong>income</strong>: (numeric) Annual income of applicant
+($)</li>
+<li><strong>exp</strong>: (numeric) Employment experience in years</li>
+<li><strong>HO</strong>: (factor) Home ownership status (“RENT”, “OWN”,
+“MORTGAGE”, “OTHER”)</li>
+<li><strong>loan_amnt</strong>: (numeric) Amount of the loan ($)</li>
+<li><strong>loan_intent</strong>: (factor) Intent of the loan
+(“PERSONAL”, “EDUCATION”, “MEDICAL”, “VENTURE”, “HOMEIMPROVEMENT”,
+“DEBTCONSOLIDATION”)</li>
+<li><strong>loan_int_rate</strong>: (numeric) Interest rate of the loan
+(%)</li>
+<li><strong>loan_percent_income</strong>: (numeric) Loan amount as a
+percentage of annual income (%)</li>
+<li><strong>cred_hist_length</strong>: (numeric) Amount of years of
+previous credit history</li>
+<li><strong>credit_score</strong>: (numeric) Credit score of
+applicant</li>
+<li><strong>prev_defaults</strong>: (factor) Whether applicant had
+previously defaulted on loan (1 for yes, 0 for no)</li>
+</ul>
 <pre class="r"><code>loan &lt;- read.csv(&quot;./loan_data.csv&quot;)
 loan &lt;- as_tibble(loan)
 loan &lt;- loan |&gt; mutate(
@@ -1686,9 +1703,10 @@ debtconsol &lt;- ifelse(loan_intent == &quot;DEBTCONSOLIDATION&quot;, 1, 0)
 #Previous loan defaults on file indicator (No is baselines)
 yesdefault &lt;- ifelse(prev_defaults == &quot;Yes&quot;, 1, 0)
 
-loan_indic &lt;- as_tibble(cbind(age, female, associate, bachelor, master, phd, income, exp, rent, mortgage, own, loan_amnt, education, medical, venture, homeimprov, debtconsol, loan_int_rate, loan_percent_income, cred_hist_length, credit_score, yesdefault, status))
-
-#Split training and testing data
+loan_indic &lt;- as_tibble(cbind(age, female, associate, bachelor, master, phd, income, exp, rent, mortgage, own, loan_amnt, education, medical, venture, homeimprov, debtconsol, loan_int_rate, loan_percent_income, cred_hist_length, credit_score, yesdefault, status))</code></pre>
+<p>We used the first 36000 observations as training data, and the last
+9000 as testing data.</p>
+<pre class="r"><code>#Split training and testing data
 train_indic &lt;- loan_indic[1:36000,]
 test_indic &lt;- loan_indic[36001:45000,]</code></pre>
 <div id="abstract" class="section level2">
@@ -1735,15 +1753,52 @@ less likely to lead to people being approved or denied for loans.</li>
 <div id="methods" class="section level2">
 <h2>Methods</h2>
 <!-- What type of regession techniques did we use? -->
-<ul>
-<li>i.e nominal / logistic / ordinal / linear / multilinear</li>
-</ul>
 <p>We used binary logistic regression:</p>
 <pre class="r"><code>loan_logit_fixed &lt;- glm(status ~ ., family=binomial(link = &quot;logit&quot;), data=train_indic_fixed)
-deviance(loan_logit_fixed)</code></pre>
-<pre><code>## [1] 15515.64</code></pre>
-<pre class="r"><code>deviance(loan_logit)</code></pre>
-<pre><code>## [1] 15521.95</code></pre>
+summary(loan_logit_fixed)</code></pre>
+<pre><code>## 
+## Call:
+## glm(formula = status ~ ., family = binomial(link = &quot;logit&quot;), 
+##     data = train_indic_fixed)
+## 
+## Coefficients:
+##                       Estimate Std. Error z value Pr(&gt;|z|)    
+## (Intercept)         -3.449e-01  5.190e-01  -0.665 0.506337    
+## age                  1.108e-02  1.224e-02   0.905 0.365524    
+## female              -5.508e-02  4.011e-02  -1.373 0.169635    
+## associate           -9.192e-02  5.566e-02  -1.651 0.098674 .  
+## bachelor            -8.861e-02  5.438e-02  -1.629 0.103235    
+## master               1.455e-02  6.448e-02   0.226 0.821531    
+## phd                 -1.674e-01  1.682e-01  -0.995 0.319625    
+## income               1.778e-06  5.402e-07   3.292 0.000993 ***
+## exp                 -4.490e-03  1.105e-02  -0.407 0.684350    
+## rent                 3.629e-01  3.366e-01   1.078 0.281007    
+## mortgage            -2.580e-01  3.375e-01  -0.764 0.444620    
+## own                 -1.719e+00  3.502e-01  -4.907 9.24e-07 ***
+## loan_amnt           -1.095e-04  5.481e-06 -19.974  &lt; 2e-16 ***
+## education           -1.618e-01  6.762e-02  -2.394 0.016685 *  
+## medical              4.081e-01  6.576e-02   6.205 5.46e-10 ***
+## venture             -4.242e-01  7.240e-02  -5.860 4.64e-09 ***
+## homeimprov           7.382e-01  7.510e-02   9.828  &lt; 2e-16 ***
+## debtconsol           6.401e-01  6.767e-02   9.459  &lt; 2e-16 ***
+## loan_int_rate        3.190e-01  7.242e-03  44.047  &lt; 2e-16 ***
+## loan_percent_income  1.626e+01  4.122e-01  39.441  &lt; 2e-16 ***
+## cred_hist_length    -1.317e-02  9.833e-03  -1.340 0.180345    
+## credit_score        -8.889e-03  4.614e-04 -19.265  &lt; 2e-16 ***
+## yesdefault          -2.024e+01  1.140e+02  -0.178 0.859062    
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## (Dispersion parameter for binomial family taken to be 1)
+## 
+##     Null deviance: 35772  on 35998  degrees of freedom
+## Residual deviance: 15516  on 35976  degrees of freedom
+## AIC: 15562
+## 
+## Number of Fisher Scoring iterations: 19</code></pre>
+<!-- What type of variable selection methods did we use? -->
+<p>We used VIF analysis, AIC (Backwards, Forwards, and Stepwise), and
+Mallows’ Cp statistic</p>
 <pre class="r"><code>#VIF analysis w/ drop in deviance testing
 vifs &lt;- vif(loan_logit_fixed)
 which(vifs &gt;= 10)   </code></pre>
@@ -1752,21 +1807,13 @@ which(vifs &gt;= 10)   </code></pre>
 <pre class="r"><code>loan_logit_minusAge &lt;- glm(status ~ ., family=binomial(link = &quot;logit&quot;), data=train_indic_fixed[,-1])
 loan_logit_minusExp &lt;- glm(status ~ ., family=binomial(link = &quot;logit&quot;), data=train_indic_fixed[,-8])
 loan_logit_minusHO &lt;- glm(status ~ ., family=binomial(link = &quot;logit&quot;), data=train_indic_fixed[,c(-9,-10,-11)])
-anova(loan_logit_fixed, loan_logit_minusAge, loan_logit_minusExp, loan_logit_fixed, test=&quot;Chisq&quot;)</code></pre>
+anova(loan_logit_minusAge, loan_logit_minusExp, loan_logit_minusHO, loan_logit_fixed, test=&quot;Chisq&quot;)</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
-{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Resid. Df"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["Resid. Dev"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["Df"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["Deviance"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chi)"],"name":[5],"type":["dbl"],"align":["right"]}],"data":[{"1":"35976","2":"15515.64","3":"NA","4":"NA","5":"NA","_rn_":"1"},{"1":"35977","2":"15516.46","3":"-1","4":"-0.8180114","5":"0.3657622","_rn_":"2"},{"1":"35977","2":"15515.81","3":"0","4":"0.6527338","5":"NA","_rn_":"3"},{"1":"35976","2":"15515.64","3":"1","4":"0.1652777","5":"0.6843433","_rn_":"4"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Resid. Df"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["Resid. Dev"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["Df"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["Deviance"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chi)"],"name":[5],"type":["dbl"],"align":["right"]}],"data":[{"1":"35977","2":"15516.46","3":"NA","4":"NA","5":"NA","_rn_":"1"},{"1":"35977","2":"15515.81","3":"0","4":"0.6527338","5":"NA","_rn_":"2"},{"1":"35979","2":"16130.62","3":"-2","4":"-614.8095854","5":"3.131806e-134","_rn_":"3"},{"1":"35976","2":"15515.64","3":"3","4":"614.9748631","5":"5.714503e-133","_rn_":"4"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
-<pre class="r"><code>anova(loan_logit_fixed, loan_logit_minusAge, loan_logit_minusExp, loan_logit_fixed, test=&quot;Cp&quot;)</code></pre>
-<div data-pagedtable="false">
-<script data-pagedtable-source type="application/json">
-{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Resid. Df"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["Resid. Dev"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["Df"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["Deviance"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["Cp"],"name":[5],"type":["dbl"],"align":["right"]}],"data":[{"1":"35976","2":"15515.64","3":"NA","4":"NA","5":"15561.64","_rn_":"1"},{"1":"35977","2":"15516.46","3":"-1","4":"-0.8180114","5":"15560.46","_rn_":"2"},{"1":"35977","2":"15515.81","3":"0","4":"0.6527338","5":"15559.81","_rn_":"3"},{"1":"35976","2":"15515.64","3":"1","4":"0.1652777","5":"15561.64","_rn_":"4"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
-  </script>
-</div>
-<pre class="r"><code>#From this we conclude that VIF analysis of our data is not useful
-
-#Backwards AIC
+<pre class="r"><code>#Backwards AIC
 #back_AIC &lt;- stepAIC(loan_logit_fixed, direction = &quot;backward&quot;, k=2)
 Cpsel &lt;- leaps(as.matrix(train_indic_fixed[,-23]), train_indic_fixed$status, method = &quot;Cp&quot;, nbest=2)
 Table &lt;- cbind(Cpsel$which, Cpsel$size, Cpsel$Cp)
@@ -1777,26 +1824,24 @@ Table[which(Cpsel$Cp == min(Cpsel$Cp)),]</code></pre>
 ##  0.00000  1.00000  1.00000  1.00000  1.00000  1.00000  1.00000  1.00000 
 ##        H        I        J        K        L        M                   
 ##  1.00000  1.00000  1.00000  1.00000  1.00000  1.00000 16.00000 11.84766</code></pre>
-<pre class="r"><code>train_indic_Cpsel &lt;- train_indic_fixed[,c(-1,-2,-4,-5,-6,-8)]
-loan_logit_Cpsel &lt;- glm(status ~ ., family=binomial(link = &quot;logit&quot;), data=train_indic_Cpsel)
-anova(loan_logit_Cpsel, loan_logit_fixed)</code></pre>
+<pre class="r"><code>train_indic_selected &lt;- train_indic_fixed[,c(-1,-2,-3,-4,-5,-6)]
+loan_logit_selected &lt;- glm(status ~ ., family=binomial(link = &quot;logit&quot;), data=train_indic_selected)
+anova(loan_logit_selected, loan_logit_fixed, test=&quot;Cp&quot;)</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
-{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Resid. Df"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["Resid. Dev"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["Df"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["Deviance"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chi)"],"name":[5],"type":["dbl"],"align":["right"]}],"data":[{"1":"35982","2":"15523.58","3":"NA","4":"NA","5":"NA","_rn_":"1"},{"1":"35976","2":"15515.64","3":"6","4":"7.937228","5":"0.2427383","_rn_":"2"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Resid. Df"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["Resid. Dev"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["Df"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["Deviance"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["Cp"],"name":[5],"type":["dbl"],"align":["right"]}],"data":[{"1":"35982","2":"15524.46","3":"NA","4":"NA","5":"15558.46","_rn_":"1"},{"1":"35976","2":"15515.64","3":"6","4":"8.81565","5":"15561.64","_rn_":"2"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
+<p>So our model with minimal Cp includes income, HO, loan_amnt,
+loan_intent, loan_int_rate, loan_percent_income, cred_hist_length,
+credit_score, and yesdefault.</p>
 <pre class="r"><code>#Predictions
 predictions &lt;- predict(loan_logit_fixed, newdata=data.frame(test_indic[,-23]), type=&quot;response&quot;)
 mean((predictions &gt; 0.5 &amp; test_indic[23] == 1) | (predictions &lt;= 0.5 &amp; test_indic[23] == 0))</code></pre>
 <pre><code>## [1] 0.8852222</code></pre>
-<pre class="r"><code>Cppredictions &lt;- predict(loan_logit_Cpsel, newdata=data.frame(test_indic[,c(-1,-2,-4,-5,-6,-8)]), type = &quot;response&quot;)
+<pre class="r"><code>Cppredictions &lt;- predict(loan_logit_selected, newdata=data.frame(test_indic[,c(-1,-2,-3,-4,-5,-6)]), type = &quot;response&quot;)
 mean((Cppredictions &gt; 0.5 &amp; test_indic[23] == 1) | (Cppredictions &lt;= 0.5 &amp; test_indic[23] == 0))</code></pre>
-<pre><code>## [1] 0.8853333</code></pre>
-<p>So our model with minimal Cp includes associate, income, rent,
-mortgage, own, loan_amnt, education, medical, venture, homeimprov,
-debtconsol, loan_int_rate, loan_percent_income, cred_hist_length,
-credit_score, yesdefault</p>
-<!-- What type of variable selection methods did we use? -->
+<pre><code>## [1] 0.8846667</code></pre>
 <!-- What type of model selection method did we use? -->
 </div>
 <div id="analysis" class="section level2">

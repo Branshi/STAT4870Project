@@ -1,5 +1,5 @@
 ---
-title: "Data Science Salaries"
+title: "Loan Approval Data Project"
 author: "Trillyon Earl, Owen Jefcoat"
 date: "2025-03-01"
 output:
@@ -12,7 +12,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 <!-- Libraries & Setup -->
-```{r libs, results=FALSE, warnings=FALSE}
+```{r libs, results=FALSE, warning=FALSE, message=FALSE}
 library(MASS)
 library(car)
 library(nnet)
@@ -21,6 +21,26 @@ library(leaps)
 ```
 
 <!-- Data Clean-Up -->
+
+We regressed on whether a loan was approved or denied, based on data about applicants:
+
+Variables in the dataset:
+
+- **status**: (factor) Whether the loan was approved (1 for approved, 0 for denied) 
+- **age**: (numeric) Age of applicant
+- **gender**: (factor) Gender of applicant (1 for female, 0 for male)
+- **education**: (ordered factor) Maximum educational attainment (High School -> Associate -> Bachelor -> Master -> Doctorate) 
+- **income**: (numeric) Annual income of applicant ($)
+- **exp**: (numeric) Employment experience in years
+- **HO**: (factor) Home ownership status ("RENT", "OWN", "MORTGAGE", "OTHER")
+- **loan_amnt**: (numeric) Amount of the loan ($)
+- **loan_intent**: (factor) Intent of the loan ("PERSONAL", "EDUCATION", "MEDICAL", "VENTURE", "HOMEIMPROVEMENT", "DEBTCONSOLIDATION")
+- **loan_int_rate**: (numeric) Interest rate of the loan (%)
+- **loan_percent_income**: (numeric) Loan amount as a percentage of annual income (%)
+- **cred_hist_length**: (numeric) Amount of years of previous credit history
+- **credit_score**: (numeric) Credit score of applicant 
+- **prev_defaults**: (factor) Whether applicant had previously defaulted on loan (1 for yes, 0 for no)
+
 ```{r cleanup}
 loan <- read.csv("./loan_data.csv")
 loan <- as_tibble(loan)
@@ -59,7 +79,11 @@ debtconsol <- ifelse(loan_intent == "DEBTCONSOLIDATION", 1, 0)
 yesdefault <- ifelse(prev_defaults == "Yes", 1, 0)
 
 loan_indic <- as_tibble(cbind(age, female, associate, bachelor, master, phd, income, exp, rent, mortgage, own, loan_amnt, education, medical, venture, homeimprov, debtconsol, loan_int_rate, loan_percent_income, cred_hist_length, credit_score, yesdefault, status))
+```
 
+We used the first 36000 observations as training data, and the last 9000 as testing data.
+
+```{r splittrainingandtesting}
 #Split training and testing data
 train_indic <- loan_indic[1:36000,]
 test_indic <- loan_indic[36001:45000,]
@@ -100,44 +124,47 @@ train_indic_fixed <- train_indic[-32298,]
   
 ## Methods
 <!-- What type of regession techniques did we use? -->
-  - i.e nominal / logistic / ordinal / linear / multilinear
   
 We used binary logistic regression:
+
 ```{r logit}
 loan_logit_fixed <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_fixed)
-deviance(loan_logit_fixed)
-deviance(loan_logit)
+summary(loan_logit_fixed)
+```
 
+<!-- What type of variable selection methods did we use? -->
+
+We used VIF analysis, AIC (Backwards, Forwards, and Stepwise), and Mallows' Cp statistic
+
+```{r varselection}
 #VIF analysis w/ drop in deviance testing
 vifs <- vif(loan_logit_fixed)
-which(vifs >= 10)   
+which(vifs >= 10)
 loan_logit_minusAge <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_fixed[,-1])
 loan_logit_minusExp <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_fixed[,-8])
 loan_logit_minusHO <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_fixed[,c(-9,-10,-11)])
-anova(loan_logit_fixed, loan_logit_minusAge, loan_logit_minusExp, loan_logit_fixed, test="Chisq")
-anova(loan_logit_fixed, loan_logit_minusAge, loan_logit_minusExp, loan_logit_fixed, test="Cp")
-#From this we conclude that VIF analysis of our data is not useful
+anova(loan_logit_minusAge, loan_logit_minusExp, loan_logit_minusHO, loan_logit_fixed, test="Chisq")
 
 #Backwards AIC
 #back_AIC <- stepAIC(loan_logit_fixed, direction = "backward", k=2)
 Cpsel <- leaps(as.matrix(train_indic_fixed[,-23]), train_indic_fixed$status, method = "Cp", nbest=2)
 Table <- cbind(Cpsel$which, Cpsel$size, Cpsel$Cp)
 Table[which(Cpsel$Cp == min(Cpsel$Cp)),]
-train_indic_Cpsel <- train_indic_fixed[,c(-1,-2,-4,-5,-6,-8)]
-loan_logit_Cpsel <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_Cpsel)
-anova(loan_logit_Cpsel, loan_logit_fixed)
+train_indic_selected <- train_indic_fixed[,c(-1,-2,-3,-4,-5,-6)]
+loan_logit_selected <- glm(status ~ ., family=binomial(link = "logit"), data=train_indic_selected)
+anova(loan_logit_selected, loan_logit_fixed, test="Cp")
+```
 
+So our model with minimal Cp includes income, HO, loan_amnt, loan_intent, loan_int_rate, loan_percent_income, cred_hist_length, credit_score, and yesdefault.
+
+```{r predictions}
 #Predictions
 predictions <- predict(loan_logit_fixed, newdata=data.frame(test_indic[,-23]), type="response")
 mean((predictions > 0.5 & test_indic[23] == 1) | (predictions <= 0.5 & test_indic[23] == 0))
-Cppredictions <- predict(loan_logit_Cpsel, newdata=data.frame(test_indic[,c(-1,-2,-4,-5,-6,-8)]), type = "response")
+Cppredictions <- predict(loan_logit_selected, newdata=data.frame(test_indic[,c(-1,-2,-3,-4,-5,-6)]), type = "response")
 mean((Cppredictions > 0.5 & test_indic[23] == 1) | (Cppredictions <= 0.5 & test_indic[23] == 0))
 ```
 
-So our model with minimal Cp includes associate, income, rent, mortgage, own, loan_amnt, education, medical, venture, homeimprov, debtconsol, loan_int_rate, loan_percent_income, cred_hist_length, credit_score, yesdefault
-
-<!-- What type of variable selection methods did we use? -->
-  
 <!-- What type of model selection method did we use? -->
 
 ## Analysis
