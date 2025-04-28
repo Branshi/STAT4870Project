@@ -12,33 +12,287 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(MASS)
 library(car)
+library(glmnet)
 library(nnet)
+library(leaps)
 library(dplyr)
-```
-
-<!-- Data Clean-Up -->
-```{r}
-loan <- read.csv("./src/main/loan_data.csv")
-loan <- as_tibble(loan)
-loan <- loan |> mutate(
-  person_gender = factor(person_gender, ordered = FALSE, levels = c("female", "male")),
-  person_education = factor(person_education, ordered = TRUE, levels = c("High School", "Associate", "Bachelor", "Master", "Doctorate")),
-  person_home_ownership = factor(person_home_ownership, ordered = FALSE, c("RENT", "OWN", "MORTGAGE", "OTHER")),
-  loan_intent = factor(loan_intent, ordered = FALSE, c("PERSONAL", "MEDICAL", "EDUCATION", "VENTURE", "HOMEIMPROVEMENT", "DEBTCONSOLIDATION"))
-)
-loan
+library(tidyverse)
+library(Sleuth3)
+library(logistf)
+library(brglm2)
 ```
 
 ## Abstract
 <!-- Explain The Data -->
- - Explain what the data columns are, what the different values of each column.
- - Explain what data we decided to exclude before any training.
+The data set chosen for this report was [Loan Approval Classification](https://www.kaggle.com/datasets/taweilo/loan-approval-classification-data). There are 14 predictor variables and 45000 observations. These predictor variables are:
+
+$ 
+\begin{table}
+\centering
+\begin{tabular}{l |c c} 
+  Predictors & Type 
+  \\ \hline
+  Age & Float 
+  \\ 
+  Gender & Categorical
+  \\ 
+  Education & Categorical
+  \\ 
+  Income & Float
+  \\ 
+  Employment Years & Integer
+  \\ 
+  Home Ownership & Categorical
+  \\ 
+  Loan Amount & Float
+  \\ 
+  Loan Intent & Categorical
+  \\ 
+  Loan Interest Rate & Float
+  \\ 
+  Loan Percent Income & Float
+  \\
+  Credit History Length & Float
+  \\ 
+  Credit Score & Integer
+  \\ 
+  Previous Loans & Categorical
+  \\
+  Loan Status & Integer
+\end{tabular}
+\end{table} 
+$
+
+
 ## Objective
 <!-- State the objective of this project -->
-  - i.e the objective is seek value information out of a specific dataset using regressional techniques.
+The objective of this analysis is to accurately predict whether or not a person given some information about them would be approved for a loan. A value of 0 indicates rejecton and a values of 1 indicates acceptance for a loan in loan status.
+
+## Data Clean Up 
+<!-- Data Clean-Up -->
+```{r}
+loan <- read.csv("./loan_data.csv")
+loan <- as_tibble(loan)
+loan <- loan |> mutate(
+  person_gender = factor(person_gender,
+    ordered = FALSE, levels = c("female", "male")
+  ),
+  person_education = factor(person_education,
+    ordered = TRUE,
+    levels = c("High School", "Associate", "Bachelor", "Master", "Doctorate")
+  ),
+  person_home_ownership = factor(person_home_ownership,
+    ordered = FALSE,
+    c("RENT", "OWN", "MORTGAGE", "OTHER")
+  ),
+  loan_intent = factor(loan_intent,
+    ordered = FALSE,
+    c(
+      "PERSONAL", "MEDICAL", "EDUCATION",
+      "VENTURE", "HOMEIMPROVEMENT", "DEBTCONSOLIDATION"
+    )
+  ),
+  previous_loan_defaults_on_file = factor(previous_loan_defaults_on_file,
+    ordered = FALSE, c("Yes", "No")
+  )
+)
+set.seed(123) # reproducible
+n <- nrow(loan) # 45 000
+idx <- sample.int(n, size = 0.8 * n) # random 80 %
+train <- loan[idx, ] # 36 000 rows
+test <- loan[-idx, ] # 9 000 rows
+predictors_numeric <- train |>
+  select(where(is.numeric)) |>
+  select(-loan_status)
+```
+```{r}
+test_model <- function(model, testdat, cutoff = 0.5) {
+  # 1. predicted probabilities
+  pred_prob <- predict(model, newdata = testdat, type = "response")
+
+  # 2. convert to 0/1 class using chosen cutoff
+  pred_class <- ifelse(pred_prob > cutoff, 1, 0)
+
+  # 3. return proportion correct
+  mean(pred_class == testdat$loan_status)
+}
+```
+## Full Model vs Null Model
+### Full Model
+This is the fitted model of all predictor variables that were left after data-clearning.
+```{r}
+full_model <- glm(loan_status ~ .,
+  data = train,
+  family = binomial(link = "logit")
+)
+summary(full_model)
+test_model(full_model, test)
+Cp_model <- glm(loan_status ~ . - person_age - person_gender - person_education - person_emp_exp, data = train, family = binomial(link = "logit"))
+test_model(Cp_model, test)
+summary(Cp_model)
+mean((test$loan_status - predict(Cp_model, test, type = "response"))^2)
+anova(full_model, Cp_model, test = "Chisq")
+# Statistics
+AIC(full_model)
+BIC(full_model)
+mean((test$loan_status - predict(full_model, test, type = "response"))^2)
+```
+
+### Null Model
+This is the model of only the intercept.
+```{r}
+null_model <- glm(
+  loan_status ~ 1,
+  data   = training,
+  family = binomial(link = "logit")
+)
+
+test_model(null_model, test)
+anova(null_model, full_model, test = "Chisq")
+AIC(null_model)
+BIC(null_model)
+mean((test$loan_status - predict(null_model, test, type = "response"))^2)
+```
+
+### Null Model vs. Full Model
+We can conclude from the statistics below that atleast one predictor variable is needed in our model as the we have gotten a very low p-value and the difference in AIC/BIC shows a very clear sign that we should not use the null model.
+
+## Problematic Sample Points
+
+### Leverage
+We recieved around 5954 out of the 36000 oberservations that are considered high leverage.
+```{r}
+lev <- hatvalues(full_model)
+cutoff <- (2 * length(coef(init_model))) / nrow(training)
+lev_data <- data.frame(
+  x_values = seq_along(lev),
+  y_values = lev
+)
+ggplot(aes(x = x_values, y = y_values), data = lev_data) +
+  geom_point() +
+  geom_hline(yintercept = cutoff, col = "blue")
+high_lev <- which(lev > cutoff)
+head(high_lev)
+length(high_lev)
+```
+
+### Outliers
+We found 504 outliers within this data.
+```{r}
+rstd <- rstudent(full_model)
+outliers <- which(abs(rstd) >= 1.97)
+ggplot(aes(x = x_val, y = y_val), data = data.frame(x_val = seq_along(rstd), y_val = abs(rstd))) +
+  geom_point() +
+  geom_hline(yintercept = 1.97, col = "orange")
+head(outliers)
+length(outliers)
+```
+
+### Cook's Distance & Influential Points
+Since 1 as the cutoff is too strict for this large dataset we adjusted the cutoff to be $\frac{4}{n}$ as used in a lot studies.
+```{r}
+cd <- cooks.distance(full_model)
+influential <- which(cd > 4 / nrow(training))
+influential <- unique(unlist(influential))
+ggplot(aes(x = x_val, y = y_val), data = data.frame(x_val = seq_along(cd), y_val = cd)) +
+  geom_point() +
+  geom_hline(yintercept = 4 / nrow(training), col = "purple")
+length(influential)
+```
+
+### Problematic Points
+We remove outliers that are influential points. From the R code below we can see that all of our outliers are influential points thust we should remove each of them.
+```{r}
+sum(outliers %in% influential)
+train_no_outlier <- train[-outliers, ]
+
+no_outlier_model <- glm(loan_status ~ .,
+  data = train_no_outlier,
+  family = binomial(link = "logit")
+)
+
+summary(no_outlier_model)
+test_model(no_outlier_model, test)
+AIC(no_outlier_model)
+BIC(no_outlier_model)
+mean((test$loan_status - predict(no_outlier_model, test, type = "response"))^2)
+```
+
+### Perfect and Quasi Complete Seperation
+At this stage we have run into a problem. We encountered the warning message "glm.fit: fitted probabilities numerically 0 or 1 occurred". After researching this
+we came across that this is because we have Quasi-Complete Seperation. This means that one or more of our predictor varibles almost perfectly predicts our outcome variable.previous_loan_defaults_on_fileNo  2
+From anaylzing the summary of the full model we can spot multiple problem covariates. This is a problem because it can lead to overfitting, and it pushes the maximum likelihood and standard error towards infinity.
+
+#### Number of Previous Loan Defaults On File
+We can see that this covariate's estimate has a large magnitude around 20. This could be because of perfect and quasi complete seperation or multicollinearity.
+
+### Combatting Perfect and Quesi-Complete Seperation
+From our research a useful way to combat Quesi-Complete Seperation is to merge or drop factor levels with too few observations (< 0.5% of data size) or drop levels that are heavily sided towards one outcome. The reason for this is that
+if these factor levels with few observations heavily lean towards one side of the binary outcome then when building a model it will see this almost perfect predictor for the outcome variable and thus
+give us an esitmate with a very large magnitude for that factor level. Factor levels with too few observations also may have a wide confidence interval. Thus we collpase these factor levels into a factor level that accounts for a larger group of observations. Below is a count of how many times each
+factor level occurs in the dataset of 36000 observations.
+```{r}
+table(train_no_outlier$loan_intent)
+xtabs(~ loan_status + loan_intent, data = train_no_outlier)
+table(train_no_outlier$person_education)
+xtabs(~ loan_status + person_education, data = train_no_outlier)
+table(train_no_outlier$person_home_ownership)
+xtabs(~ loan_status + person_home_ownership, data = train_no_outlier)
+table(train_no_outlier$previous_loan_defaults_on_file)
+xtabs(~ loan_status + previous_loan_defaults_on_file, data = train_no_outlier)
+```
+
+We also see that we actually have complete seperation. Every observation that has had a previous loan default has been rejected for a loan.
+We dont want to just remove this level because it still contains very important information thus we dedcided to combat this by using firth logistic regression as recommended in the source provided.
+
+## Firth Logistic Regression
+
+Firth logistic regression augments the ordinary log-likelihood with the
+**Firth penalty**
+\[
+\frac{1}{2}\,\log\!\bigl\lvert I(\boldsymbol{\beta}) \bigr\rvert,
+\]
+where \(I(\boldsymbol{\beta})\) is the observed Fisher–information matrix.
+```{r}
+firth_model <- brglm(loan_status ~ ., data = train_no_outlier, family = "binomial", pl = TRUE)
+summary(firth_model)
+```
+As shown in the summary of the Firth model there are still estimates with large magnitudes and near 0 p values however the standard error for these estimates have decreased which tells us that it just has a strong effect on our data. For example the p value of previous loan defaults was large
+because of it's standard error, however now it is near 0. We can still test for multi-collinearity which we will do utilizing VIF.
+
+### Multi-Collinearity (VIF)
+```{r}
+vif(firth_model)
+deviance(firth_model)
+firth_without_age <- brglm(loan_status ~ . - person_age, data = train_no_outlier, family = "binomial", pl = TRUE)
+firth_without_emp_exp <- brglm(loan_status ~ . - person_emp_exp, data = train_no_outlier, family = "binomial", pl = TRUE)
+deviance(firth_without_age)
+deviance(firth_without_emp_exp)
+# Thus we remove emp_exp
+vif(firth_without_emp_exp)
+# STOP no more VIF less than 10 or 5
+```
+
+```{r}
+summary(firth_without_emp_exp)
+test_model(firth_without_emp_exp, test)
+```
+### Mallow Cp Selection
+```{r}
+x <- model.matrix(~ . - loan_status, train_no_outlier)
+Cpsel <- leaps(x, train_no_outlier$loan_status, nbest = 2, method = "Cp")
+```
+
+## Ridge Regression
+
+
 ## Methods
 <!-- What type of regession techniques did we use? -->
   - i.e nominal / logistic / ordinal / linear / multilinear
+  - Regress on loan status - Logistic
+  - Regress on education - Ordinal
+  - Variable Selection
+  - AIC/BIC/MAPE/MPSE
 <!-- What type of variable selection methods did we use? -->
   
 <!-- What type of model selection method did we use? -->
@@ -47,4 +301,8 @@ loan
   <!-- Analysis Introductoin -->
   
 ## Conclusion
-  - 
+
+## Sources
+https://stats.oarc.ucla.edu/other/mult-pkg/faq/general/faqwhat-is-complete-or-quasi-complete-separation-in-logistic-regression-and-what-are-some-strategies-to-deal-with-the-issue/
+https://medium.datadriveninvestor.com/firths-logistic-regression-classification-with-datasets-that-are-small-imbalanced-or-separated-49d7782a13f1
+
