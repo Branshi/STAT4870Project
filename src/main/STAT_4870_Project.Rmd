@@ -10,8 +10,8 @@ output: pdf_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ```
-<!-- Libraries & Setup -->
 ```{r}
 library(MASS)
 library(car)
@@ -26,7 +26,6 @@ library(brglm2)
 ```
 
 ## Abstract
-<!-- Explain The Data -->
 The data set chosen for this report was [Loan Approval Classification](https://www.kaggle.com/datasets/taweilo/loan-approval-classification-data). There are 14 predictor variables and 45000 observations. These predictor variables are:
 \begin{table}
 \centering
@@ -64,11 +63,9 @@ The data set chosen for this report was [Loan Approval Classification](https://w
 \end{table} 
 
 # Objective
-<!-- State the objective of this project -->
 The objective of this analysis is to accurately predict whether or not a person given some information about them would be approved for a loan. A value of 0 indicates rejecton and a values of 1 indicates acceptance for a loan in loan status.
 
 # Data Clean Up 
-<!-- Data Clean-Up -->
 ```{r}
 loan <- read.csv("./loan_data.csv")
 loan <- as_tibble(loan)
@@ -95,7 +92,7 @@ loan <- loan |> mutate(
     ordered = FALSE, c("Yes", "No")
   )
 )
-set.seed(123) # reproducible
+set.seed(123)
 n <- nrow(loan) # 45 000
 idx <- sample.int(n, size = 0.8 * n) # random 80 %
 train <- loan[idx, ] # 36 000 rows
@@ -109,12 +106,8 @@ predictors_numeric <- train |>
 ```
 ```{r}
 test_model <- function(model, testdat, cutoff = 0.5) {
-  # 1. predicted probabilities
   pred_prob <- predict(model, newdata = testdat, type = "response")
-
-  # 2. convert to 0/1 class using chosen cutoff
   pred_class <- ifelse(pred_prob > cutoff, 1, 0)
-
   data.frame(
     MSPE = mean((testdat$loan_status - predict(model, testdat, type = "response"))^2),
     Error = 1 - mean(pred_class == testdat$loan_status)
@@ -263,6 +256,7 @@ firth_model <- glm(
 )
 
 summary(firth_model)
+test_model(firth_model, test)
 ```
 As shown in the summary of the Firth model there are still estimates with large magnitudes however the standard error for these estimates have decreased which tells us that it just has a strong effect on our data. For example the p value of previous loan defaults was large
 because of it's standard error, however now it is near 0. However Firth Regression doesnt handle multi-collinearity like ridge regression thus we can still test for multi-collinearity which we will do utilizing VIF.
@@ -295,7 +289,7 @@ test_model(firth_without_emp_exp, test)
 
 #### Forward
 Forward Stepwise AIC resulted in the original firth_model, no variabels were removed.
-```{r, results="hide"}
+```{r}
 AIC.f <- stepAIC(firth_model, direction = "forward", k = 2, trace = FALSE)
 test_model(AIC.f, test)
 ```
@@ -303,14 +297,14 @@ test_model(AIC.f, test)
 #### Backward
 Backward Stepwise AIC resulted in the removal of gender, education, and income variables.
 Gender, Education, Income
-```{r, results="hide"}
+```{r}
 AIC.b <- stepAIC(firth_model, direction = "backward", k = 2, trace = FALSE)
 test_model(AIC.b, test)
 ```
 
 #### Both
 Similar to Backward Stepwise AIC, Alternating Stepwise AIC resulted in the same removals as Backward Stepwise AIC.
-```{r, results="hide"}
+```{r}
 AIC.both <- stepAIC(firth_model, direction = "both", k = 2, trace = FALSE)
 test_model(AIC.both, test)
 ```
@@ -387,7 +381,7 @@ The different regression methods we used were Ordinary Logistic Regression, Firt
 - The Ridge logistic model (loan_status ~ .) with the ommitted outliers and with 10-fold cross-validation.  
 
 ## Results
-To evaluate predictive performance we applied each fitted model to the 20 % hold-out set and recorded the mean-squared prediction error (MSPE)—equivalent to the Brier score for a binary outcome—and the mis-classification error rate at a 0.5 cut-off.
+To evaluate predictive performance we applied each fitted model to the 20% test data and recorded the mean-squared prediction error (MSPE) and the classification error rate at a 0.5 cut-off.
  
 \begin{table}[htbp]
 \centering
@@ -396,34 +390,34 @@ To evaluate predictive performance we applied each fitted model to the 20 % hold
 \textbf{Model (training setup)}               & \textbf{MSPE}          & \textbf{Prediction Error Rate} \\
 \midrule
 \multicolumn{3}{l}{\em Ordinary Logistic Regression}\\
-\quad Full model, original data                       & \texttt{num\_mspe\_olg\_full}      & \texttt{num\_err\_olg\_full}   \\
-\quad Null model, Drop-in-Deviance test                & \texttt{num\_mspe\_olg\_null}      & \texttt{num\_err\_olg\_null}   \\
-\quad Full model, outliers removed                     & \texttt{num\_mspe\_olg\_no\_out}   & \texttt{num\_err\_olg\_no\_out}\\[6pt]
+\quad Full model, original data                       & $0.07304491$     & $0.1061111$   \\
+\quad Null model, Drop-in-Deviance test                & $0.1729012$      & $0.2223333$   \\
+\quad Full model, outliers removed                     & $0.07450024$   & $0.1063333$\\[6pt]
 
 \multicolumn{3}{l}{\em Firth’s Logistic Regression}\\
-\quad Firth ($\!-\,$person\_emp\_exp), outliers removed                & \texttt{num\_mspe\_firth\_base}   & \texttt{num\_err\_firth\_base} \\
-\quad Firth + VIF + Stepwise AIC                                         & \texttt{num\_mspe\_firth\_step}   & \texttt{num\_err\_firth\_step} \\[6pt]
+\quad Firth, outliers removed                                        & $0.07447477$   & $0.1063333$ \\
+\quad Firth ($\!-\,$person\_emp\_exp), outliers removed                & $0.0745102$   & $0.1066667$ \\
+\quad Firth + VIF + Stepwise AIC                                         & $0.07443141$   & $0.106$ \\[6pt]
 
 \multicolumn{3}{l}{\em Ridge Logistic Regression}\\
-\quad Ridge (10-fold CV, $\lambda_{\text{min}}$), outliers removed      & \texttt{num\_mspe\_ridge}         & \texttt{num\_err\_ridge}       \\
+\quad Ridge (10-fold CV, $\lambda_{\text{min}}$), outliers removed      & $0.0767909$         & $0.1051111$       \\
 \bottomrule
 \end{tabular}
-\caption{Hold-out performance for each main model and its variants.  Lower MSPE and error rate indicate better predictive accuracy.}
 \end{table}
 
 # Conclusion
 
 ## Best-performing model
-Ridge logistic regression achieved the lowest MSPE and error rate, showing that a modest amount of shrinkage can still improve generalisation even after obvious multicollinearity has been removed. The penalty stabilises the remaining correlated predictors and guards against residual over-fitting, which explains why ridge edged out both the full ordinary-MLE model and the bias-reduced Firth fit.
+Based off of prediction error rate, which is the most important to us for this analysis, ridge regression produced the lowest error rate and thus was our best performing model.
 
 ## Handling separation
-During the study we encountered both perfect and quasi-complete separation—most prominently for the “previous loan defaults” variable. Ordinary logistic regression produced huge, unstable coefficients and warnings. Firth’s bias-reduced logistic regression resolved this by adding the Jeffreys–prior penalty, yielding finite, interpretable estimates.
+During the study we encountered both perfect and quasi-complete separation—most prominently for the “previous loan defaults” variable. Ordinary logistic regression produced huge, unstable coefficients and warnings. Firth’s bias-reduced logistic regression resolved this by adding the a penalty, giving us more interpretable estimates.
 
 ## Effect of variable selection
-Stepwise AIC on the Firth model removed predictors that contributed little additional deviance, reducing model complexity without harming test-set accuracy. Ridge regression, however, implicitly performs continuous shrinkage, retaining all variables and avoiding stepwise search.
+Stepwise AIC on the Firth model removed predictors that contributed little additional deviance, reducing model complexity without decreasing accuracy. Ridge regression, however, implicitly performs continuous shrinkage, retaining all variables and avoiding stepwise search.
 
 ## Practical insight
-Separation and multicollinearity require different remedies. Firth correction fixes the former, while ridge regression (or elastic-net) tackles the latter. In our loan-approval data, multicollinearity was the stronger driver of generalisation error, hence ridge emerged as the overall winner.
+Separation and multicollinearity require different remedies. Firth correction fixes the former, while ridge regression tackles the latter. In our loan-approval data, we can assume multicollinearity was the stronger driver of error, thus ridge emerged as the overall winner.
 
 # Sources
 - https://stats.oarc.ucla.edu/other/mult-pkg/faq/general/faqwhat-is-complete-or-quasi-complete-separation-in-logistic-regression-and-what-are-some-strategies-to-deal-with-the-issue/
