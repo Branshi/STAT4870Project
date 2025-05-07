@@ -90,7 +90,9 @@ loan <- loan |> mutate(
   ),
   previous_loan_defaults_on_file = factor(previous_loan_defaults_on_file,
     ordered = FALSE, c("Yes", "No")
-  )
+  ),
+  person_income = scale(person_income),
+  loan_amnt = scale(loan_amnt),
 )
 set.seed(123)
 n <- nrow(loan) # 45 000

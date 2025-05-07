@@ -1,0 +1,691 @@
+---
+title: "Loan Approval"
+author: "Trillyon Earl, Owen Jefcoat"
+date: "2025-03-01"
+header-includes:
+  - \usepackage{float}
+  - \usepackage{booktabs}
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(MASS)
+library(car)
+library(glmnet)
+library(nnet)
+library(leaps)
+library(dplyr)
+library(tidyverse)
+library(Sleuth3)
+library(logistf)
+library(brglm2)
+```
+
+# Abstract
+Using a 45 000 observeration Kaggle [Loan Approval Classification](https://www.kaggle.com/datasets/taweilo/loan-approval-classification-data) data set with 14 applicant and loan variables, we set out to build a model that classifies applications as accepted (1) or rejected (0). 
+After standardising monetary variables and splitting the data 80 : 20 into training and test sets, we fitted three families of logistic models: (i) an ordinary full model (and its null counterpart), (ii) Firth’s bias‑reduced logistic regression to remedy the perfect / quasi‑complete separation produced by the “previous loan defaults” factor, 
+and (iii) ridge‑penalised logistic regression with $\lambda$ chosen by 10‑fold cross‑validation to mitigate multicollinearity. 
+Problematic observations were diagnosed with hat‑values, studentised residuals and Cook’s D; 504 outliers (all influential) were removed before refitting. 
+On the held‑out test data, the ridge model achieved the lowest misclassification rate (10.5 %) and an MSPE of 0.0768, edging out both the full ordinary model (10.6%) and the optimised Firth variants (10.6%). 
+Thus, while Firth regression stabilised coefficients under separation and stepwise AIC removed uneeded complexity, continuous shrinkage via ridge offered the best trade‑off between bias and variance, making it the preferred tool for loan‑approval screening in this study.
+The predictor variables for this data set are:
+\begin{table}[H]
+\centering
+\begin{tabular}{l |c c} 
+  Predictors & Type 
+  \\ \hline
+  Age & Float 
+  \\ 
+  Gender & Categorical
+  \\ 
+  Education & Categorical
+  \\ 
+  Income & Float
+  \\ 
+  Employment Years & Integer
+  \\ 
+  Home Ownership & Categorical
+  \\ 
+  Loan Amount & Float
+  \\ 
+  Loan Intent & Categorical
+  \\ 
+  Loan Interest Rate & Float
+  \\ 
+  Loan Percent Income & Float
+  \\
+  Credit History Length & Float
+  \\ 
+  Credit Score & Integer
+  \\ 
+  Previous Loans & Categorical
+  \\
+  Loan Status & Integer
+\end{tabular}
+\end{table} 
+
+# Objective
+The objective of this analysis is to accurately predict whether or not a person given some information about them would be approved for a loan. A value of 0 indicates rejecton and a values of 1 indicates acceptance for a loan in loan status.
+
+# Data Preprocessing
+Aside from converting categorical variables to factors, the only preprocessing we performed was scaling the **Loan Amount** and **Income** variables, following feedback from Dr. Gong during our presentation of this analysis. 
+This step is sensible because those two variables have magnitudes that differ substantially from the others in the dataset. We then split the data into an 80 – 20 train‑test partition, using 80% for training and 20% for testing.
+
+<!-- Data Clean Up --->
+```{r, include=FALSE}
+loan <- read.csv("./loan_data.csv")
+loan <- as_tibble(loan)
+loan <- loan |> mutate(
+  person_gender = factor(person_gender,
+    ordered = FALSE, levels = c("female", "male")
+  ),
+  person_education = factor(person_education,
+    ordered = TRUE,
+    levels = c("High School", "Associate", "Bachelor", "Master", "Doctorate")
+  ),
+  person_home_ownership = factor(person_home_ownership,
+    ordered = FALSE,
+    c("RENT", "OWN", "MORTGAGE", "OTHER")
+  ),
+  loan_intent = factor(loan_intent,
+    ordered = FALSE,
+    c(
+      "PERSONAL", "MEDICAL", "EDUCATION",
+      "VENTURE", "HOMEIMPROVEMENT", "DEBTCONSOLIDATION"
+    )
+  ),
+  previous_loan_defaults_on_file = factor(previous_loan_defaults_on_file,
+    ordered = FALSE, c("Yes", "No")
+  ),
+  person_income = scale(person_income),
+  loan_amnt = scale(loan_amnt),
+)
+set.seed(123)
+n <- nrow(loan) # 45 000
+idx <- sample.int(n, size = 0.8 * n) # random 80%
+train <- loan[idx, ] # 36 000 rows
+test <- loan[-idx, ] # 9 000 rows
+test$loan_status <- as.numeric(as.character(test$loan_status))
+train$loan_status <- as.numeric(as.character(train$loan_status))
+
+predictors_numeric <- train |>
+  select(where(is.numeric)) |>
+  select(-loan_status)
+```
+
+```{r, include=FALSE}
+test_model <- function(model, testdat, cutoff = 0.5) {
+  pred_prob <- predict(model, newdata = testdat, type = "response")
+  pred_class <- ifelse(pred_prob > cutoff, 1, 0)
+  data.frame(
+    MSPE = mean((testdat$loan_status - predict(model, testdat, type = "response"))^2),
+    Error = 1 - mean(pred_class == testdat$loan_status)
+  )
+}
+```
+
+# Methods
+### Full Ordinary Logistic Model
+This is the fitted model of all predictors. The results of the measurements we got from this model are below. We expected this model to do relatively well as our variables seems to have strong correlation with either approval or rejection already so there is
+not much to filter or search for.
+```{r, include=FALSE}
+full_model <- glm(loan_status ~ .,
+  data = train,
+  family = binomial(link = "logit")
+)
+summary(full_model)
+test_model(full_model, test)
+# Statistics
+AIC(full_model)
+BIC(full_model)
+```
+
+### Null Ordinary Logistic Model
+This is the model of only the intercept. We expected this model to do relatively poor as the intercept alone is too little information to make accurate predictions and the results of the measurements
+reflected this hypothesis.
+
+
+```{r, include=FALSE}
+null_model <- glm(
+  loan_status ~ 1,
+  data   = train,
+  family = binomial(link = "logit")
+)
+
+test_model(null_model, test)
+anova(null_model, full_model, test = "Chisq")
+AIC(null_model)
+BIC(null_model)
+```
+
+### Null Model vs. Full Model
+We determined that the null model is inadequate not only from its poor performance metrics but also from the drop‑in‑deviance test. 
+The $\chi^2$ ANOVA produced a very low p‑value, indicating that at least one predictor variable is essential for the model.
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Model} & \textbf{AIC} & \textbf{BIC} & \textbf{MSPE} & \textbf{Error} \\
+\midrule
+Full          &     $15898.15$       &      $16093.45$      &     $0.07304491$       &      $10.61\%$      \\
+Null                &    $38138.34$        &    $38146.83$        &     $0.1729012$       &     $22.23\%$       \\
+\bottomrule
+\end{tabular}
+\caption{Full vs. Null model statistics for Loan Approval\label{tab:full-null-metrics}}
+\end{table}
+
+## Problematic Sample Points
+
+### Leverage
+We recieved around 5954 out of the 36000 oberservations that are considered high leverage. An oberservation is considered high leverage in our analysis
+if the leverage is greater than $2(k+1)/n$, where k is 14 and n is 36000.
+```{r, include=FALSE}
+lev <- hatvalues(full_model)
+cutoff <- (2 * length(coef(full_model))) / nrow(train)
+lev_data <- data.frame(
+  x_values = seq_along(lev),
+  y_values = lev
+)
+ggplot(aes(x = x_values, y = y_values), data = lev_data) +
+  geom_point() +
+  geom_hline(yintercept = cutoff, col = "blue")
+high_lev <- which(lev > cutoff)
+head(high_lev)
+length(high_lev)
+```
+```{r, echo=FALSE, fig.cap="Leverage values with dashed cutoff.", fig.pos="H" , out.width="80%", fig.align = 'center'}
+ggplot(lev_data, aes(x_values, y_values)) +
+  # points
+  geom_point(size = 1, alpha = .6, colour = "#3E4A89") +
+  # leverage cut‑off
+  geom_hline(
+    yintercept = cutoff,
+    linetype = "dashed",
+    linewidth = .6,
+    colour = "#E4572E"
+  ) +
+  # labels
+  labs(
+    title = "Leverage",
+    subtitle = paste0("High leverage if hat >= ", round(cutoff, 4)),
+    x = "Observation index",
+    y = "Hat value"
+  ) +
+  # light, publication‑friendly theme
+  theme_minimal(base_size = 11, base_family = "Times") +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.title       = element_text(face = "bold"),
+    plot.subtitle    = element_text(size = 9, margin = margin(b = 6))
+  )
+```
+
+### Outliers
+We found 504 outliers within this data. A oberservation was determined an outlier if its the absolute value of its studentized residual was greater than or equals 1.97
+```{r, include=FALSE}
+rstd <- rstudent(full_model)
+outliers <- which(abs(rstd) >= 1.97)
+ggplot(aes(x = x_val, y = y_val), data = data.frame(x_val = seq_along(rstd), y_val = abs(rstd))) +
+  geom_point() +
+  geom_hline(yintercept = 1.97, col = "orange")
+head(outliers)
+length(outliers)
+```
+```{r, echo=FALSE, fig.cap="Absolute value of studentized residuals with dashed cutoff.", fig.pos="H" ,out.width="80%", fig.align = 'center'}
+cut_res <- 1.97
+res_df <- data.frame(idx = seq_along(rstd), r = abs(rstd))
+
+ggplot(res_df, aes(idx, r)) +
+  geom_point(size = 1, alpha = .6, colour = "#3E4A89") +
+  geom_hline(
+    yintercept = cut_res,
+    linetype = "dashed",
+    linewidth = .6,
+    colour = "#E4572E"
+  ) +
+  labs(
+    title = "Studentised residuals",
+    subtitle = paste0("Outlier if |r| >= ", cut_res),
+    x = "Observation index",
+    y = "|Studentised residual|"
+  ) +
+  theme_minimal(base_size = 11, base_family = "Times") +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.title       = element_text(face = "bold"),
+    plot.subtitle    = element_text(size = 9, margin = margin(b = 6))
+  )
+```
+
+### Cook's Distance & Influential Points
+When using a cutoff value of 1 for our Cook's Distance we recieved no influential points and after some research we switched this cutoff to $\frac{4}{n}$ as used in many
+papers when dealing with relatively large datasets. After loosening the cutoff, we found 2478 influential points as shown in Figure 3.
+```{r, include=FALSE}
+cd <- cooks.distance(full_model)
+influential <- which(cd > 4 / nrow(train))
+influential <- unique(unlist(influential))
+length(influential)
+```
+```{r, echo=FALSE, fig.cap="Cook's Distance values with dashed cutoff.", fig.pos="H" ,out.width="88%", fig.align = 'center'}
+cut_cd <- 4 / nrow(train)
+cd_df <- data.frame(idx = seq_along(cd), cd = cd)
+
+ggplot(cd_df, aes(idx, cd)) +
+  geom_point(size = 1, alpha = .6, colour = "#3E4A89") +
+  geom_hline(
+    yintercept = cut_cd,
+    linetype = "dashed",
+    linewidth = .6,
+    colour = "#E4572E"
+  ) +
+  labs(
+    title = "Cook's distance",
+    subtitle = paste0("Influential if D >= ", signif(cut_cd, 3)),
+    x = "Observation index",
+    y = "Cook's D"
+  ) +
+  theme_minimal(base_size = 11, base_family = "Times") +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.title       = element_text(face = "bold"),
+    plot.subtitle    = element_text(size = 9, margin = margin(b = 6))
+  )
+```
+
+### Problematic Points
+
+We discovered that every outlier was also an influential point, so we removed all outliers from the model. 
+Next, we rebuilt the full model with the updated training set and evaluated its performance. 
+This revision caused only a slight increase in the error rate and MSPE, but it produced a substantial decrease in AIC and BIC.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Model} & \textbf{AIC} & \textbf{BIC} & \textbf{MSPE} & \textbf{Error} \\
+\midrule
+Full (Removed Outliers)          &     $13010.07$       &      $13205.05$      &     $0.07450024$       &      $10.63\%$      \\
+\bottomrule
+\end{tabular}
+\caption{ Full model with no outliers statistics for Loan Approval\label{tab:full-no-outlier-metrics}}
+\end{table}
+```{r, include=FALSE}
+sum(outliers %in% influential)
+train_no_outlier <- train[-outliers, ]
+
+no_outlier_model <- glm(loan_status ~ .,
+  data = train_no_outlier,
+  family = binomial(link = "logit")
+)
+
+summary(no_outlier_model)
+test_model(no_outlier_model, test)
+AIC(no_outlier_model)
+BIC(no_outlier_model)
+```
+
+### Perfect and Quasi Complete Seperation
+As we were analyzing the output of our model we encountered the warning message "glm.fit: fitted probabilities numerically 0 or 1 occurred". After researching 
+we found out that this is because we have Perfect or Quasi-Complete Seperation. This means that one or more of our predictor varibles almost perfectly predicts our outcome variable.
+From anaylzing the summary of the full model we can spot multiple problem covariates. This is a problem because it can lead to overfitting, and it pushes the maximum likelihood and standard error towards infinity.
+
+#### Number of Previous Loan Defaults On File
+We can see that this covariate's estimate has a large magnitude around 20. The cause of this could be from perfect and quasi complete seperation or multicollinearity.
+
+### Combatting Perfect and Quesi-Complete Seperation
+From our research a useful way to combat Quesi-Complete Seperation is to merge or drop factor levels with too few observations (< 0.5% of data size) or drop levels that are heavily sided towards one outcome. The reason for this is that
+if these factor levels with few observations and heavily lean towards one side of the binary outcome then when building a model it will see this almost perfect predictor for the outcome variable and thus
+give us an esitmate with a very large magnitude for that factor level. Factor levels with too few observations also may have a wide confidence interval. Thus we collpase these factor levels into a single factor level that accounts for a larger group of observations. Below is a count of how many times each
+factor level occurs in the dataset of 36000 observations and their corresponding outcome.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Status} & PERSONAL & MEDICAL & EDUCATION & VENTURE & HOME & DEBT\\
+\midrule
+0 & 4\,835 & 4\,889 & 6\,041 & 5\,316 & 2\,806 & 3\,965\\
+1 & 1\,083 & 1\,862 & 1\,138 &   864 &   987 & 1\,710\\
+\bottomrule
+\end{tabular}
+\caption{Loan intent by loan status}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Status} & High School & Associate & Bachelor & Master & Doctorate\\
+\midrule
+0 & 7\,404 & 7\,452 & 8\,301 & 4\,316 &  379\\
+1 & 2\,064 & 2\,048 & 2\,272 & 1\,157 &  103\\
+\bottomrule
+\end{tabular}
+\caption{Education level by loan status}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Status} & RENT & OWN & MORTGAGE & OTHER\\
+\midrule
+0 & 12\,574 & 2\,172 & 13\,045 &  61\\
+1 &  5\,977 &   157 &  1\,480 &  30\\
+\bottomrule
+\end{tabular}
+\caption{Home‐ownership status by loan status}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrr}
+\toprule
+\textbf{Status} & Yes & No\\
+\midrule
+0 & 18\,259 &  9\,593\\
+1 &      0 &  7\,644\\
+\bottomrule
+\end{tabular}
+\caption{Previous loan defaults on file by loan status}
+\end{table}
+
+```{r, include=FALSE}
+xtabs(~ loan_status + loan_intent, data = train_no_outlier)
+xtabs(~ loan_status + person_education, data = train_no_outlier)
+xtabs(~ loan_status + person_home_ownership, data = train_no_outlier)
+xtabs(~ loan_status + previous_loan_defaults_on_file, data = train_no_outlier)
+```
+
+We see that we actually have complete seperation. Every observation that has had a previous loan default has been rejected for a loan.
+We dont want to just remove this level because it still contains very important information thus we dedcided to combat this by using firth logistic regression as recommended in the sources provided.
+
+## Firth's Bias Reduced Logistic Regression
+
+Firth logistic regression augments the ordinary log-likelihood with the
+**Firth penalty**
+\[
+L_{\text{Firth}} = L_{\text{Logit}} \;-\; \frac{1}{2}\,\text{Penalty}
+\]
+where the penalty term is made to prevent the log-likelihood from becoming infinite in cases of seperation.
+
+### Formula
+\[
+L_{\text{Firth}} = L_{\text{Logit}} \;-\; \frac{1}{2}\,\log\!\bigl\lvert I(\boldsymbol{\beta}) \bigr\rvert,
+\]
+where \(I(\boldsymbol{\beta})\) is the observed Fisher–information matrix.
+```{r, include=FALSE}
+firth_model <- glm(
+  formula = loan_status ~ ., data = train_no_outlier, family = "binomial",
+  na.action = na.fail, method = "brglmFit"
+)
+
+summary(firth_model)
+test_model(firth_model, test)
+AIC(firth_model)
+BIC(firth_model)
+```
+As shown in the appendix (M.IV), there are still estimates with large magnitudes however the standard error for these estimates have significantly decreased which now informs us that it has a strong effect on our data. For example the p value of previous loan defaults was large
+because of it's standard error, however now the p-value is near zero. Firth Regression, however, does not handle multi-collinearity like ridge regression thus we can still test for multi-collinearity which we will do utilizing VIF.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Model} & \textbf{AIC} & \textbf{BIC} & \textbf{MSPE} & \textbf{Error} \\
+\midrule
+Firth Model          &     $13011.3$       &      $13206.28$      &     $0.07447477$       &      $10.63\%$      \\
+\bottomrule
+\end{tabular}
+\caption{Firth model statistics for Loan Approval\label{tab:firth-no-outlier-metrics}}
+\end{table}
+
+### Multi-Collinearity (VIF)
+The two variables with VIFs greater than 10 were **age** and **employment experience**. After comparing the deviance of both, removing employment experience resulted in a lower deviance thus we chose to remove that variable. 
+After that removal there were no more VIFs > 10. When removing the problem covariate with didn't see any noticeable change in our measurements in accuracy.  
+```{r, results="hide", include=FALSE}
+vif(firth_model)
+deviance(firth_model)
+firth_without_age <- glm(
+  formula = loan_status ~ . - person_age, data = train_no_outlier, family = "binomial",
+  na.action = na.fail, method = "brglmFit"
+)
+firth_without_emp_exp <- glm(
+  formula = loan_status ~ . - person_emp_exp, data = train_no_outlier, family = "binomial",
+  na.action = na.fail, method = "brglmFit"
+)
+vif(firth_without_emp_exp)
+# STOP no more VIF less than 10 or 5
+```
+
+```{r, include=FALSE}
+deviance(firth_without_age)
+deviance(firth_without_emp_exp)
+summary(firth_without_emp_exp)
+test_model(firth_without_emp_exp, test)
+AIC(firth_without_emp_exp)
+BIC(firth_without_emp_exp)
+```
+
+### Stepwise AIC Variable Selection on Firth Logistic Regression
+We also applied a stepwise AIC variable selection to our original firth model in multiple directions which resulted in the measurements below. Again there was no noticeable change in accuracy besides our error percentage decreasing from
+10.63% to 10.60% in our backward and both model.
+
+#### Forward
+Forward Stepwise AIC resulted in the original Firth model, no variabels were removed.
+```{r, include=FALSE}
+AIC.f <- stepAIC(firth_model, direction = "forward", k = 2, trace = FALSE)
+test_model(AIC.f, test)
+```
+
+#### Backward
+Backward Stepwise AIC resulted in the removal of gender, education, and income variables.
+```{r, include=FALSE}
+AIC.b <- stepAIC(firth_model, direction = "backward", k = 2, trace = FALSE)
+test_model(AIC.b, test)
+```
+
+#### Both
+Similar to Backward Stepwise AIC, Alternating Stepwise AIC resulted in the same removals as Backward Stepwise AIC.
+```{r, include=FALSE}
+AIC.both <- stepAIC(firth_model, direction = "both", k = 2, trace = FALSE)
+test_model(AIC.both, test)
+```
+
+## Ridge Logistic Regression
+The goal of ridge regression is to exchange increased bias for decreased variance. Ridge regression takes the ordinary least squares method and adds a penalty to it which minimizes the sum of squared residuals (RSS) and the penalty,
+which is the sum of coefficients ($B_j$) squared times lambda, where lambda determines the severity of the penalty. This results in a smaller coefficients as we can in the below R code. 
+In the case of Logistic Regression, Ridge Regression minimizes the sum of the likelihoods plus the sum of coefficients squared times lambda. But how do we choose a value of lambda that doesnt minimize the coefficients too much but just enough?
+We use Cross-Validation, specifically 10-fold cross validation to determine which lambda results in the lowest SSE. Another useful thing about Ridge Regression is that we do not need to do any variable selection as Ridge Regression already minimizes coefficients that would be
+removed from various variable selection methods. The coefficients found from our Ridge Regression can be viewed in the appendix.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Model} & \textbf{MSPE} & \textbf{Error} \\
+\midrule
+Ridge Model          &     $0.0767909$       &      $10.51\%$      \\
+\bottomrule
+\end{tabular}
+\caption{Ridge model statistics for Loan Approval\label{tab:ridge-no-outlier-metrics}}
+\end{table}
+
+```{r, include=FALSE}
+x_train <- model.matrix(loan_status ~ ., data = train_no_outlier)[, -1]
+y_train <- train_no_outlier$loan_status
+
+cv_ridge <- cv.glmnet(
+  x_train, y_train,
+  family = "binomial",
+  alpha = 0,
+  nfolds = 10,
+  type.measure = "class"
+)
+plot(cv_ridge)
+
+lambda_min <- cv_ridge$lambda.min # lambda that minimises CV error
+lambda_1se <- cv_ridge$lambda.1se
+lambda_min
+
+ridge_model <- glmnet(
+  x_train, y_train,
+  family = "binomial",
+  alpha = 0,
+  lambda = lambda_min
+)
+
+coef(ridge_model)
+x_train <- model.matrix(loan_status ~ ., data = train_no_outlier)[, -1]
+
+x_test <- model.matrix(loan_status ~ ., data = test)[, -1]
+
+x_test <- x_test[, colnames(x_train)]
+
+p_hat <- predict(ridge_model,
+  newx = x_test,
+  s = "lambda.min",
+  type = "response"
+)[, 1]
+pred_class <- ifelse(p_hat > 0.5, 1, 0)
+
+data.frame(
+  MSPE = mean((test$loan_status - p_hat)^2),
+  Error = 1 - mean(pred_class == test$loan_status)
+)
+```
+
+### Why Not LASSO
+We decided to use Ridge regression instead of LASSO regression soley because we wanted to keep all of our coefficients even if they aren't impactful as they still provide some sense of
+inference.
+
+# Analysis & Results
+
+The different regression methods we used were Ordinary Logistic Regression, Firth Logistic Regression, and Ridge Regression. We applied different variable selection techniques such as Stepwise AIC and VIF.
+
+## Ordinary Logistic Regression
+- The logistic full model (loan_status ~ all variables) with the original training data.
+- The logistic null model (loan_status ~ intercept) with the original training data and Drop-in Deviance test.
+- The logistic model (loan_status ~ all variables) with the omitted outliers training data.
+
+## Firth's Logistic Regression
+- The firth logistic model (loan_status ~ all variables - person_emp_exp) with the omitted outliers training data 
+- The firth logistic model (loan_status ~ all variables - person_emp_exp) with the omitted outliers training data and variable selection using VIF and StepwiseAIC
+
+
+## Ridge Logistic Regression
+- The Ridge logistic model (loan_status ~ all variables) with the ommitted outliers and with 10-fold cross-validation.  
+
+## Results
+To evaluate predictive performance we applied each fitted model to the 20% test data and recorded the mean-squared prediction error (MSPE) and the classification error rate at a 0.5 cut-off.
+ 
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Model (training setup)}               & \textbf{MSPE}          & \textbf{Prediction Error Rate} \\
+\midrule
+\multicolumn{3}{l}{\em Ordinary Logistic Regression}\\
+\quad Full model, original data                       & $0.07304491$     & $0.1061111$   \\
+\quad Null model, Drop-in-Deviance test                & $0.1729012$      & $0.2223333$   \\
+\quad Full model, outliers removed                     & $0.07450024$   & $0.1063333$\\[6pt]
+
+\multicolumn{3}{l}{\em Firth’s Logistic Regression}\\
+\quad Firth, outliers removed                                        & $0.07447477$   & $0.1063333$ \\
+\quad Firth ($\!-\,$person\_emp\_exp), outliers removed                & $0.0745102$   & $0.1066667$ \\
+\quad Firth + VIF + Stepwise AIC                                         & $0.07443141$   & $0.106$ \\[6pt]
+
+\multicolumn{3}{l}{\em Ridge Logistic Regression}\\
+\quad Ridge (10-fold CV, $\lambda_{\text{min}}$), outliers removed      & $0.0767909$         & $0.1051111$       \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+# Conclusion
+
+## Best-performing model
+Based off of prediction error rate, which is the most important to us for this analysis, ridge regression produced the lowest error rate and thus was our best performing model.
+
+## Handling separation
+During the study we encountered both perfect and quasi-complete separation—most prominently for the “previous loan defaults” variable. Ordinary logistic regression produced huge, unstable coefficients and warnings. Firth’s bias-reduced logistic regression resolved this by adding the a penalty, giving us more interpretable estimates.
+
+## Practical insight
+Separation and multicollinearity require different remedies. Firth regression fixes the former, while ridge regression fixes the latter. In our loan-approval data, we can assume multicollinearity was the stronger driver of error, thus ridge regression emerged as the overall winner.
+
+# Sources
+- https://stats.oarc.ucla.edu/other/mult-pkg/faq/general/faqwhat-is-complete-or-quasi-complete-separation-in-logistic-regression-and-what-are-some-strategies-to-deal-with-the-issue/
+- https://medium.datadriveninvestor.com/firths-logistic-regression-classification-with-datasets-that-are-small-imbalanced-or-separated-49d7782a13f1
+
+# Appendix
+
+## Models
+
+### M.I Full
+```{r}
+full_model <- glm(loan_status ~ .,
+  data = train,
+  family = binomial(link = "logit")
+)
+summary(full_model)$coefficients
+```
+
+### M.II Null
+```{r}
+null_model <- glm(
+  loan_status ~ 1,
+  data   = train,
+  family = binomial(link = "logit")
+)
+summary(null_model)$coefficients
+```
+
+### M.III Full (No-Outlier) 
+```{r}
+train_no_outlier <- train[-outliers, ]
+no_outlier_model <- glm(loan_status ~ .,
+  data = train_no_outlier,
+  family = binomial(link = "logit")
+)
+summary(no_outlier_model)$coefficients
+```
+
+### M.IV Firth
+```{r}
+firth_model <- glm(
+  formula = loan_status ~ ., data = train_no_outlier, family = "binomial",
+  na.action = na.fail, method = "brglmFit"
+)
+summary(firth_model)$coefficients
+```
+
+### M.V Ridge
+```{r}
+cv_ridge <- cv.glmnet(
+  x_train, y_train,
+  family = "binomial",
+  alpha = 0,
+  nfolds = 10,
+  type.measure = "class"
+)
+
+lambda_min <- cv_ridge$lambda.min # lambda that minimises CV error
+lambda_1se <- cv_ridge$lambda.1se
+lambda_min
+
+ridge_model <- glmnet(
+  x_train, y_train,
+  family = "binomial",
+  alpha = 0,
+  lambda = lambda_min
+)
+coef(ridge_model)
+```
+
+## Plots
+
+### P.I Lambda CV
+```{r}
+plot(cv_ridge)
+```
